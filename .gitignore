@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# API 配置文件 —— 含密钥，禁止提交
+api_config.json
+
+# _old文件：被废弃，禁止提交
+*_old*
