@@ -21,7 +21,6 @@ OUTPUT_DIR="./output"
 
 # ---------- 脚本所在目录 ----------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV_DIR="${SCRIPT_DIR}/.venv"
 
 # ---------- 帮助信息 ----------
 usage() {
@@ -66,25 +65,6 @@ done
 if [[ -z "${MODEL_ALIAS}" ]]; then
     # 从模型路径中提取最后一部分作为别名, 替换掉路径分隔符和非字母数字字符
     MODEL_ALIAS=$(basename "${MODEL_NAME_OR_PATH}" | sed 's/[^a-zA-Z0-9_-]/_/g')
-fi
-
-# ---------- 检查虚拟环境 ----------
-if [[ ! -f "${VENV_DIR}/Scripts/activate" ]] && [[ ! -f "${VENV_DIR}/bin/activate" ]]; then
-    echo "[错误] 未找到虚拟环境: ${VENV_DIR}"
-    echo "[提示] 请先创建虚拟环境并安装依赖:"
-    echo "       python -m venv .venv"
-    echo "       source .venv/bin/activate  # 或 .venv\\Scripts\\activate"
-    echo "       pip install -r requirements.txt"
-    exit 1
-fi
-
-# ---------- 激活虚拟环境 ----------
-if [[ -f "${VENV_DIR}/Scripts/activate" ]]; then
-    # Windows (Git Bash / MSYS2)
-    source "${VENV_DIR}/Scripts/activate"
-else
-    # Linux / macOS
-    source "${VENV_DIR}/bin/activate"
 fi
 
 # ---------- 检查数据文件 ----------
