@@ -16,7 +16,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 # 类型别名
 # ---------------------------------------------------------------------------
 
-PoolingStrategy = Literal["mean", "last_token", "eos_token", "max", "weighted_mean", "cls_token"]
+PoolingStrategy = Literal["mean", "last_token", "eos_token", "max", "weighted_mean"]
 """支持的池化策略类型"""
 
 class HiddenInfoExtractor:
@@ -36,11 +36,13 @@ class HiddenInfoExtractor:
             model_path,
             trust_remote_code=trust_remote_code
         )
+        # 对于未设置 pad_token 的 tokenizer（如 LLaMA），将 eos_token 用作 pad_token
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
         self.model = AutoModelForCausalLM.from_pretrained(
             model_path,
-            torch_dtype=torch_dtype,
+            dtype=torch_dtype,
             trust_remote_code=trust_remote_code,
-            output_hidden_states=True,
             **kwargs
         )
         # device_map 与 .to() 互斥：若用户通过 kwargs 传入了 device_map，则由
@@ -95,7 +97,7 @@ class HiddenInfoExtractor:
             Transformers模型标注输出，包含hidden_state和attention_weights信息
         """
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
-        outputs = self.model(**inputs, output_attentions=output_attentions)
+        outputs = self.model(**inputs, output_hidden_states=True, output_attentions=output_attentions)
         return outputs
 
     def pipeline(self, text: str):
@@ -161,71 +163,184 @@ class HiddenInfoExtractor:
         return hidden_states[resolved_index]
 
     # ==================================================================
-    # 池化辅助方法
+    # 池化策略注册表
+    # ==================================================================
+
+    _POOLING_REGISTRY: dict[str, Any] = {}
+    """池化策略注册表：名称 → 可调用对象。
+
+    向注册表添加新策略的方式：
+
+        HiddenInfoExtractor._POOLING_REGISTRY["my_strategy"] = my_pool_fn
+
+    策略函数签名要求：
+
+        def my_pool(
+            hidden_states: torch.Tensor,      # (batch, seq_len, hidden_dim)
+            attention_mask: torch.Tensor,     # (batch, seq_len)
+            *,
+            attentions: torch.Tensor | None = None,
+            input_ids: torch.Tensor | None = None,
+            eos_token_id: int | None = None,
+        ) -> torch.Tensor: ...
+    """
+
+    # ==================================================================
+    # 池化策略实现
+    # ==================================================================
+
+    @staticmethod
+    def _pool_mean(
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor,
+        *,
+        attentions: torch.Tensor | None = None,
+        input_ids: torch.Tensor | None = None,
+        eos_token_id: int | None = None,
+    ) -> torch.Tensor:
+        """均值池化：对所有非填充 token 取平均。"""
+        mask_expanded = attention_mask.unsqueeze(-1).float()
+        masked = hidden_states * mask_expanded
+        summed = masked.sum(dim=1)
+        counts = mask_expanded.sum(dim=1).clamp(min=1)
+        return summed / counts
+
+    @staticmethod
+    def _pool_last_token(
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor,
+        *,
+        attentions: torch.Tensor | None = None,
+        input_ids: torch.Tensor | None = None,
+        eos_token_id: int | None = None,
+    ) -> torch.Tensor:
+        """末位池化：取每个序列最后一个非填充 token 的隐藏状态。"""
+        seq_lengths = attention_mask.sum(dim=1) - 1
+        batch_indices = torch.arange(hidden_states.size(0), device=hidden_states.device)
+        return hidden_states[batch_indices, seq_lengths, :]
+
+    @staticmethod
+    def _pool_eos_token(
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor,
+        *,
+        attentions: torch.Tensor | None = None,
+        input_ids: torch.Tensor | None = None,
+        eos_token_id: int | None = None,
+    ) -> torch.Tensor:
+        """EOS 池化：取 EOS token 位置的隐藏状态。
+
+        通过 input_ids 与 eos_token_id 精确匹配来定位 EOS token，
+        而非简单取最后一个非填充 token。
+        若某序列中未找到 eos_token，则回退到末位 token。
+        """
+        if input_ids is None:
+            raise ValueError(
+                "eos_token 策略需要 input_ids 参数。"
+                "请确保调用方传入了 input_ids 张量。"
+            )
+        if eos_token_id is None:
+            raise ValueError(
+                "eos_token 策略需要 eos_token_id 参数。"
+                "请从 tokenizer.eos_token_id 获取后传入。"
+            )
+        # 确保 input_ids 与 hidden_states 在同一设备
+        if input_ids.device != hidden_states.device:
+            input_ids = input_ids.to(hidden_states.device)
+        if attention_mask.device != hidden_states.device:
+            attention_mask = attention_mask.to(hidden_states.device)
+
+        # 找到每个序列中 eos_token 的位置（取第一个匹配）
+        eos_mask = (input_ids == eos_token_id) & attention_mask.bool()
+        has_eos = eos_mask.any(dim=1)                       # (batch,)
+        eos_positions = eos_mask.float().argmax(dim=1)      # (batch,) —— 无 True 时 argmax 返回 0
+
+        # 对没有 eos_token 的序列，回退到最后一个非填充 token
+        if not has_eos.all():
+            fallback_positions = attention_mask.sum(dim=1) - 1
+            eos_positions = torch.where(has_eos, eos_positions, fallback_positions)
+
+        batch_indices = torch.arange(hidden_states.size(0), device=hidden_states.device)
+        return hidden_states[batch_indices, eos_positions, :]
+
+    @staticmethod
+    def _pool_max(
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor,
+        *,
+        attentions: torch.Tensor | None = None,
+        input_ids: torch.Tensor | None = None,
+        eos_token_id: int | None = None,
+    ) -> torch.Tensor:
+        """最大池化：对每个维度取非填充区域的最大值。"""
+        mask_expanded = attention_mask.unsqueeze(-1).float()
+        masked = hidden_states * mask_expanded + (1 - mask_expanded) * -1e9
+        return masked.max(dim=1).values
+
+    @staticmethod
+    def _pool_weighted_mean(
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor,
+        *,
+        attentions: torch.Tensor | None = None,
+        input_ids: torch.Tensor | None = None,
+        eos_token_id: int | None = None,
+    ) -> torch.Tensor:
+        """注意力加权均值池化：用最后一层注意力权重对 token 做加权平均。"""
+        if attentions is None:
+            raise ValueError(
+                "weighted_mean 策略需要传入注意力权重。"
+                "请确保模型以 output_attentions=True 加载，并在 encode() 中设置 output_attentions=True。"
+            )
+        last_attn = attentions[-1]                          # (batch, num_heads, seq_len, seq_len)
+        avg_attn = last_attn.mean(dim=1)                    # (batch, seq_len, seq_len)
+        weights = avg_attn.sum(dim=-1)                      # (batch, seq_len)
+        weights = weights * attention_mask.float()
+        weights = weights / weights.sum(dim=1, keepdim=True).clamp(min=1e-9)
+        return (hidden_states * weights.unsqueeze(-1)).sum(dim=1)
+
+    # ==================================================================
+    # 池化分派
     # ==================================================================
 
     @staticmethod
     def _pool_single_layer(
         hidden_states: torch.Tensor,
         attention_mask: torch.Tensor,
-        strategy: PoolingStrategy = "mean",
+        strategy: str = "mean",
         attentions: torch.Tensor | None = None,
+        input_ids: torch.Tensor | None = None,
+        eos_token_id: int | None = None,
     ) -> torch.Tensor:
         """对单层 token-level 隐藏状态执行池化，得到句向量。
+
+        通过注册表 _POOLING_REGISTRY 分派到对应的池化函数。
 
         Args:
             hidden_states:  shape = (batch_size, seq_len, hidden_dim)
             attention_mask: shape = (batch_size, seq_len) —— 1 表示真实 token，0 表示 padding
-            strategy:       池化策略
+            strategy:       池化策略名称（需已在 _POOLING_REGISTRY 中注册）
             attentions:     注意力权重 (batch, num_heads, seq_len, seq_len)，仅 weighted_mean 需要
+            input_ids:      token ID 序列 (batch, seq_len)，eos_token 策略需要
+            eos_token_id:   EOS token 的 ID，eos_token 策略需要
 
         Returns:
             句向量 (batch_size, hidden_dim)
         """
-        mask_expanded = attention_mask.unsqueeze(-1).float()  # (batch, seq_len, 1)
-
-        if strategy == "mean":
-            masked = hidden_states * mask_expanded
-            summed = masked.sum(dim=1)
-            counts = mask_expanded.sum(dim=1).clamp(min=1)
-            return summed / counts
-
-        elif strategy == "last_token":
-            seq_lengths = attention_mask.sum(dim=1) - 1
-            batch_indices = torch.arange(hidden_states.size(0), device=hidden_states.device)
-            return hidden_states[batch_indices, seq_lengths, :]
-
-        elif strategy == "eos_token":
-            seq_lengths = attention_mask.sum(dim=1) - 1
-            seq_lengths = seq_lengths.clamp(min=0)
-            batch_indices = torch.arange(hidden_states.size(0), device=hidden_states.device)
-            return hidden_states[batch_indices, seq_lengths, :]
-
-        elif strategy == "cls_token":
-            return hidden_states[:, 0, :]
-
-        elif strategy == "max":
-            masked = hidden_states * mask_expanded + (1 - mask_expanded) * -1e9
-            return masked.max(dim=1).values
-
-        elif strategy == "weighted_mean":
-            if attentions is None:
-                raise ValueError(
-                    "weighted_mean 策略需要传入注意力权重。"
-                    "请确保模型以 output_attentions=True 加载，并在 encode() 中设置 output_attentions=True。"
-                )
-            last_attn = attentions[-1]                          # (batch, num_heads, seq_len, seq_len)
-            avg_attn = last_attn.mean(dim=1)                    # (batch, seq_len, seq_len)
-            weights = avg_attn.sum(dim=-1)                      # (batch, seq_len)
-            weights = weights * attention_mask.float()
-            weights = weights / weights.sum(dim=1, keepdim=True).clamp(min=1e-9)
-            return (hidden_states * weights.unsqueeze(-1)).sum(dim=1)
-
-        else:
+        pool_fn = HiddenInfoExtractor._POOLING_REGISTRY.get(strategy)
+        if pool_fn is None:
+            available = list(HiddenInfoExtractor._POOLING_REGISTRY.keys())
             raise ValueError(
                 f"不支持的池化策略: {strategy}。"
-                f"可选: mean, last_token, eos_token, max, weighted_mean, cls_token"
+                f"可选: {', '.join(available)}"
             )
+        return pool_fn(
+            hidden_states,
+            attention_mask,
+            attentions=attentions,
+            input_ids=input_ids,
+            eos_token_id=eos_token_id,
+        )
 
     # ==================================================================
     # 句嵌入提取
@@ -238,6 +353,8 @@ class HiddenInfoExtractor:
         pooling: PoolingStrategy = "mean",
         layers: Optional[list[int]] = None,
         attentions: Optional[tuple] = None,
+        input_ids: Optional[torch.Tensor] = None,
+        eos_token_id: Optional[int] = None,
         normalize: bool = True,
         return_numpy: bool = True,
     ) -> np.ndarray | torch.Tensor:
@@ -249,9 +366,11 @@ class HiddenInfoExtractor:
         Args:
             hidden_states:  tuple of (batch, seq_len, hidden_dim)，每层一个 tensor
             attention_mask: (batch, seq_len) —— 1 表示真实 token，0 表示 padding
-            pooling:        池化策略，可选: mean, last_token, eos_token, max, weighted_mean, cls_token
+            pooling:        池化策略，可选: mean, last_token, eos_token, max, weighted_mean
             layers:         指定要返回的层索引（None = 全部层）。0 为 embedding 层，-1 为最后一层
             attentions:     attention weights tuple，仅 weighted_mean 策略需要
+            input_ids:      token ID 序列 (batch, seq_len)，eos_token 策略需要
+            eos_token_id:   EOS token 的 ID，eos_token 策略需要
             normalize:      是否对句向量做 L2 归一化
             return_numpy:   返回 numpy 数组（True）还是 torch Tensor（False）
 
@@ -273,9 +392,11 @@ class HiddenInfoExtractor:
         # 对每层执行池化
         pooled: list[torch.Tensor] = []
         for hs in hidden_states:
-            attn_for_layer = attentions if pooling == "weighted_mean" else None
             sent_vec = HiddenInfoExtractor._pool_single_layer(
-                hs, attention_mask, pooling, attentions=attn_for_layer
+                hs, attention_mask, pooling,
+                attentions=attentions,
+                input_ids=input_ids,
+                eos_token_id=eos_token_id,
             )
             pooled.append(sent_vec)
 
@@ -378,9 +499,11 @@ class HiddenInfoExtractor:
             # Step 3: 逐层池化（不在这里做 normalize，最后统一做）
             batch_pooled: list[torch.Tensor] = []
             for hs in hs_tuple:
-                attn_for_layer = attns if pooling == "weighted_mean" else None
                 sent_vec = self._pool_single_layer(
-                    hs, attn_mask, pooling, attentions=attn_for_layer
+                    hs, attn_mask, pooling,
+                    attentions=attns,
+                    input_ids=inputs.get("input_ids"),
+                    eos_token_id=self.tokenizer.eos_token_id,
                 )
                 batch_pooled.append(sent_vec)
 
@@ -464,7 +587,12 @@ class HiddenInfoExtractor:
         if embedding_b.ndim == 1:
             embedding_b = embedding_b[np.newaxis, :]
 
-        cos_sim = (embedding_a * embedding_b).sum(axis=1)
+        # 显式 L2 归一化后再计算余弦相似度，防止调用方传入未归一化向量
+        norm_a = np.linalg.norm(embedding_a, axis=1, keepdims=True)
+        norm_b = np.linalg.norm(embedding_b, axis=1, keepdims=True)
+        dot_product = (embedding_a * embedding_b).sum(axis=1)
+        cos_sim = dot_product / (norm_a.squeeze() * norm_b.squeeze())
+        cos_sim = np.nan_to_num(cos_sim, nan=0.0)
         cos_sim = np.clip(cos_sim, -1.0, 1.0)
 
         return {
@@ -540,7 +668,10 @@ class HiddenInfoExtractor:
         )
         # (num_layers, num_sentences, hidden_dim) → 跨层平均
         sentence_embeddings = embeddings.mean(axis=0)
-        sim_matrix = sentence_embeddings @ sentence_embeddings.T
+        # 显式 L2 归一化后再计算余弦相似度矩阵
+        norms = np.linalg.norm(sentence_embeddings, axis=1, keepdims=True)
+        normed = sentence_embeddings / np.maximum(norms, 1e-12)
+        sim_matrix = normed @ normed.T
         return np.clip(sim_matrix, -1.0, 1.0)
 
     # ------------------------------------------------------------------
@@ -590,3 +721,16 @@ class HiddenInfoExtractor:
             "num_attention_heads": getattr(config, "num_attention_heads", None),
             "num_key_value_heads": num_kv_heads,
         }
+
+
+# ---------------------------------------------------------------------------
+# 注册内置池化策略
+# ---------------------------------------------------------------------------
+
+HiddenInfoExtractor._POOLING_REGISTRY = {
+    "mean": HiddenInfoExtractor._pool_mean,
+    "last_token": HiddenInfoExtractor._pool_last_token,
+    "eos_token": HiddenInfoExtractor._pool_eos_token,
+    "max": HiddenInfoExtractor._pool_max,
+    "weighted_mean": HiddenInfoExtractor._pool_weighted_mean,
+}
