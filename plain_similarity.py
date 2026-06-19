@@ -29,6 +29,8 @@ def main():
     extractor = extract_hidden_info.HiddenInfoExtractor(args.model_name_or_path, device=DEVICE, dtype=DTYPE)
     # 读取数据
     data = read_data.SpatialDataset(args.data_file)
+    # 创建结果目录
+    os.makedirs(args.output_dir, exist_ok=True)
 
     results = []
     labels = data.labels  # 标签在外层提取，避免内层循环重复计算
