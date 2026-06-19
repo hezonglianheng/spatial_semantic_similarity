@@ -244,12 +244,6 @@ class HiddenInfoExtractor:
                 "eos_token 策略需要 eos_token_id 参数。"
                 "请从 tokenizer.eos_token_id 获取后传入。"
             )
-        # 确保 input_ids 与 hidden_states 在同一设备
-        if input_ids.device != hidden_states.device:
-            input_ids = input_ids.to(hidden_states.device)
-        if attention_mask.device != hidden_states.device:
-            attention_mask = attention_mask.to(hidden_states.device)
-
         # 找到每个序列中 eos_token 的位置（取第一个匹配）
         eos_mask = (input_ids == eos_token_id) & attention_mask.bool()
         has_eos = eos_mask.any(dim=1)                       # (batch,)
@@ -334,13 +328,28 @@ class HiddenInfoExtractor:
                 f"不支持的池化策略: {strategy}。"
                 f"可选: {', '.join(available)}"
             )
-        return pool_fn(
+
+        # ── 设备对齐：确保所有张量与 hidden_states 在同一设备 ──
+        target_device = hidden_states.device
+        if attention_mask.device != target_device:
+            attention_mask = attention_mask.to(target_device)
+        if input_ids is not None and input_ids.device != target_device:
+            input_ids = input_ids.to(target_device)
+        if attentions is not None:
+            attentions = tuple(
+                a.to(target_device) if a.device != target_device else a
+                for a in attentions
+            )
+
+        sent_vec = pool_fn(
             hidden_states,
             attention_mask,
             attentions=attentions,
             input_ids=input_ids,
             eos_token_id=eos_token_id,
         )
+        # 池化结果立即移至 CPU，释放 GPU 显存；后续拼接/归一化/相似度均在 CPU 完成
+        return sent_vec.cpu()
 
     # ==================================================================
     # 句嵌入提取
@@ -422,8 +431,6 @@ class HiddenInfoExtractor:
                 embeddings_tensor, p=2, dim=-1
             )
             embeddings_tensor = torch.nan_to_num(embeddings_tensor, nan=0.0)
-
-        embeddings_tensor = embeddings_tensor.cpu()
 
         if return_numpy:
             return embeddings_tensor.numpy()
@@ -541,8 +548,6 @@ class HiddenInfoExtractor:
                 embeddings_tensor, p=2, dim=-1
             )
             embeddings_tensor = torch.nan_to_num(embeddings_tensor, nan=0.0)
-
-        embeddings_tensor = embeddings_tensor.cpu()
 
         if return_numpy:
             return embeddings_tensor.numpy()
