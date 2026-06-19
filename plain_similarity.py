@@ -26,7 +26,7 @@ def main():
     args = argparser.parse_args()
 
     # 初始化隐藏信息提取器
-    extractor = extract_hidden_info.HiddenInfoExtractor(args.model_name_or_path, device=DEVICE, dtype=DTYPE)
+    extractor = extract_hidden_info.HiddenInfoExtractor(args.model_name_or_path, device=DEVICE, torch_dtype=DTYPE)
     # 读取数据
     data = read_data.SpatialDataset(args.data_file)
     # 创建结果目录
