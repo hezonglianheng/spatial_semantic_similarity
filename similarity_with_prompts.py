@@ -73,7 +73,7 @@ def main():
         for strategy in STRATEGIES:
             print(f"[信息] 模型：{args.model_alias}, 池化策略：{strategy}")
             # 应用不同的池化策略，获得相似度的矩阵，矩阵的每一行代表一个句子对，每一列代表一个层的相似度
-            similarities = [extractor.similarity(sentence1, sentence2, pooling=strategy) for (sentence1, sentence2) in prompted_sentences]
+            similarities = [extractor.similarity(sentence1, sentence2, pooling=strategy, show_progress=False) for (sentence1, sentence2) in prompted_sentences]
             similarities_by_pair_layer = [sim["layer_similarities"] for sim in similarities]
             similarities_matrix = np.array(similarities_by_pair_layer)
 

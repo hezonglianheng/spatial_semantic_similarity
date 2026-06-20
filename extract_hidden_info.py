@@ -619,9 +619,11 @@ class HiddenInfoExtractor:
         self,
         sentence_a: str,
         sentence_b: str,
+        output_attentions: bool = True,
         pooling: PoolingStrategy = "mean",
         layers: Optional[list[int]] = None,
         normalize: bool = True,
+        show_progress: bool = True, 
     ) -> dict:
         """计算两个句子在各层的余弦相似度（端到端）。
 
@@ -630,6 +632,7 @@ class HiddenInfoExtractor:
         Args:
             sentence_a: 句子 A
             sentence_b: 句子 B
+            output_attention: 是否输出注意力(weighted_mean需要)
             pooling:    池化策略
             layers:     指定层（None = 全部层）
             normalize:  是否 L2 归一化
@@ -640,9 +643,11 @@ class HiddenInfoExtractor:
         embeddings = self.embed(
             [sentence_a, sentence_b],
             pooling=pooling,
+            output_attentions=output_attentions,
             layers=layers,
             normalize=normalize,
             return_numpy=True,
+            show_progress=show_progress, 
         )
         # (num_layers, 2, hidden_dim)
         a = embeddings[:, 0, :]
@@ -653,6 +658,8 @@ class HiddenInfoExtractor:
     def pairwise_similarity_matrix(
         self,
         sentences: list[str],
+        output_attentions: bool = True, 
+        batch_sizes: int = 8, 
         pooling: PoolingStrategy = "mean",
         layers: Optional[list[int]] = None,
         normalize: bool = True,
@@ -661,6 +668,8 @@ class HiddenInfoExtractor:
 
         Args:
             sentences: 句子列表
+            output_attentions：是否输出注意力(weighted_mean需要)
+            batch_size: 批处理大小
             pooling:   池化策略
             layers:    层列表（None = 全部层平均）
             normalize: 是否 L2 归一化
