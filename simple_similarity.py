@@ -22,7 +22,7 @@ def main():
 
     extractor = esd.SimilarityExtractor(args.model_name_or_path)
 
-    similarities = [extractor.similarity(sentence1, sentence2).to("cpu") for (sentence1, sentence2) in data.sentences]
+    similarities = [extractor.similarity(sentence1, sentence2).to("cpu").item() for (sentence1, sentence2) in data.sentences]
 
     # 保存相似度结果到CSV文件
     df = pd.DataFrame({"sentence1": [s1 for s1, s2 in data.sentences], "sentence2": [s2 for s1, s2 in data.sentences], "similarity": similarities})
