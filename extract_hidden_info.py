@@ -281,10 +281,14 @@ class HiddenInfoExtractor:
         eos_token_id: int | None = None,
     ) -> torch.Tensor:
         """注意力加权均值池化：用最后一层注意力权重对 token 做加权平均。"""
-        if attentions is None:
+        if not attentions:
             raise ValueError(
-                "weighted_mean 策略需要传入注意力权重。"
-                "请确保模型以 output_attentions=True 加载，并在 encode() 中设置 output_attentions=True。"
+                "weighted_mean 策略需要传入注意力权重，但 attentions 为空。"
+                "可能原因：\n"
+                "1. 未设置 output_attentions=True；\n"
+                "2. 模型使用了不支持返回注意力权重的后端（如 Flash Attention 2 / SDPA）。"
+                "请尝试在加载模型时显式指定 attn_implementation='eager'，"
+                "例如: AutoModelForCausalLM.from_pretrained(..., attn_implementation='eager')"
             )
         last_attn = attentions[-1]                          # (batch, num_heads, seq_len, seq_len)
         avg_attn = last_attn.mean(dim=1)                    # (batch, seq_len, seq_len)
@@ -550,7 +554,7 @@ class HiddenInfoExtractor:
             embeddings_tensor = torch.nan_to_num(embeddings_tensor, nan=0.0)
 
         if return_numpy:
-            return embeddings_tensor.numpy()
+            return embeddings_tensor.float().numpy()
         return embeddings_tensor
 
     # ------------------------------------------------------------------
