@@ -10,11 +10,11 @@ import pandas as pd
 import os
 import argparse
 
-STRATEGIES = ["mean", "last_token", "eos_token", "max", "weighted_mean"]
+STRATEGIES = ["mean", "last_token", "eos_token", "max"]
 """句向量池化策略"""
 
 DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-DTYPE = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+DTYPE = torch.float32
 
 def main():
     argparser = argparse.ArgumentParser(description="一般计算相似度的脚本")

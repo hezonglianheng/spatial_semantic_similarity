@@ -10,7 +10,7 @@ import pandas as pd
 import os
 import argparse
 
-STRATEGIES = ["mean", "last_token", "eos_token", "max", "weighted_mean"]
+STRATEGIES = ["mean", "last_token", "eos_token", "max", ]
 """句向量池化策略"""
 
 PROMPTS = [
@@ -67,7 +67,8 @@ def main():
     labels = data.labels  # 标签在外层提取，避免内层循环重复计算
 
     assert len(data) % 2 == 0, "数据长度必须是偶数"
-    for p in range(0, len(prompted_sentences), 2):
+    for p in range(0, len(PROMPTS), 2):
+        p_group = (p // 2) + 1 # prompt的分组
         # 为每个句子添加prompt信息
         prompted_sentences = [(add_prompt(rec, p), add_prompt(rec, p + 1)) for rec in data]
         for strategy in STRATEGIES:
@@ -86,7 +87,7 @@ def main():
                 spearman = scipy.stats.spearmanr(layer_similarities, labels)
                 pearson = scipy.stats.pearsonr(layer_similarities, labels)
                 results.append({
-                    "prompt_group": p, 
+                    "prompt_group": p_group, 
                     "strategy": strategy,
                     "layer": i,
                     "accuracy": accuracy,
@@ -99,13 +100,13 @@ def main():
             # 存储结果
             # 1. 将相似度的矩阵保存在CSV文件中
             df = pd.DataFrame(similarities_matrix)
-            df_path = f"{args.output_dir}/similarities_{args.model_alias}_prompt{p}_{strategy}.csv"
+            df_path = f"{args.output_dir}/similarities_{args.model_alias}_prompt{p_group}_{strategy}.csv"
             df.to_csv(df_path, index=False)
             print(f"[信息] 已保存相似度矩阵到 {df_path}")
 
     # 2. 将准确率、Spearman相关系数和Pearson相关系数保存在CSV文件中
     df_results = pd.DataFrame(results)
-    df_results_path = f"{args.output_dir}/results_{args.model_alias}.csv"
+    df_results_path = f"{args.output_dir}/results_prompt{p_group}_{args.model_alias}.csv"
     df_results.to_csv(df_results_path, index=False)
     print(f"[信息] 已保存结果到 {df_results_path}")
 
