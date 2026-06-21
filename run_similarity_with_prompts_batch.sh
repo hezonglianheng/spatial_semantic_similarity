@@ -22,7 +22,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ---------- 默认参数 ----------
 DATA_FILE="spatial_dataset.json"
-OUTPUT_DIR="./output"
+OUTPUT_BASE_DIR="./output"
 
 # ---------- 默认模型列表 (格式: "模型路径::别名" 用空格分隔) ----------
 # 别名用于输出文件命名; 若省略别名则从路径自动提取
@@ -44,7 +44,7 @@ usage() {
   --models "M1::A1 M2::A2 ..."   模型列表: 每个条目为 模型路径::别名, 空格分隔
                                   别名可选, 省略时自动从路径提取
   -d, --data-file PATH           数据文件路径 (默认: ${DATA_FILE})
-  -o, --output-dir DIR           输出目录 (默认: ${OUTPUT_DIR})
+  -o, --output-dir DIR           输出基础目录, 每个模型输出到 <DIR>/<别名>/ (默认: ${OUTPUT_BASE_DIR})
   -h, --help                     显示此帮助信息
 
 模型指定方式:
@@ -77,7 +77,7 @@ while [[ $# -gt 0 ]]; do
         -d|--data-file)
             DATA_FILE="$2"; shift 2 ;;
         -o|--output-dir)
-            OUTPUT_DIR="$2"; shift 2 ;;
+            OUTPUT_BASE_DIR="$2"; shift 2 ;;
         -h|--help)
             usage ;;
         *)
@@ -108,14 +108,14 @@ if [[ ! -f "${SCRIPT_DIR}/${DATA_FILE}" ]]; then
 fi
 
 # ---------- 创建输出目录 ----------
-mkdir -p "${OUTPUT_DIR}"
+mkdir -p "${OUTPUT_BASE_DIR}"
 
 # ---------- 打印批量运行信息 ----------
 echo "============================================"
 echo "  批量运行 similarity_with_prompts.py"
 echo "============================================"
 echo "  数据文件:   ${DATA_FILE}"
-echo "  输出目录:   ${OUTPUT_DIR}"
+echo "  输出基础目录: ${OUTPUT_BASE_DIR}"
 echo "  Python:     $(which python)"
 echo "  模型数量:   ${#MODEL_ENTRIES[@]}"
 echo "============================================"
@@ -159,13 +159,16 @@ for entry in "${MODEL_ENTRIES[@]}"; do
 
     cd "${SCRIPT_DIR}"
 
+    MODEL_OUTPUT_DIR="${OUTPUT_BASE_DIR}/${MODEL_ALIAS}"
+    mkdir -p "${MODEL_OUTPUT_DIR}"
+
     if python similarity_with_prompts.py \
         --data_file "${DATA_FILE}" \
         --model_name_or_path "${MODEL_PATH}" \
         --model_alias "${MODEL_ALIAS}" \
-        --output_dir "${OUTPUT_DIR}"; then
+        --output_dir "${MODEL_OUTPUT_DIR}"; then
         echo ""
-        echo "[完成] ${MODEL_ALIAS} → ${OUTPUT_DIR}/"
+        echo "[完成] ${MODEL_ALIAS} → ${MODEL_OUTPUT_DIR}/"
     else
         echo ""
         echo "[失败] ${MODEL_ALIAS} 运行出错, 继续下一个..."
@@ -182,5 +185,5 @@ echo "  总计: ${TOTAL}  成功: $((TOTAL - ${#FAILED_MODELS[@]}))  失败: ${#
 if [[ ${#FAILED_MODELS[@]} -gt 0 ]]; then
     echo "  失败列表: ${FAILED_MODELS[*]}"
 fi
-echo "  结果目录: ${OUTPUT_DIR}/"
+echo "  结果目录: ${OUTPUT_BASE_DIR}/<模型别名>/"
 echo "============================================"
