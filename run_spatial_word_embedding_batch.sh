@@ -24,7 +24,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ---------- 默认参数 ----------
 DATA_FILE="spatial_info_annotation/spatial_dataset_deepseek-v4-pro_20260618-143434_modified.json"
 OUTPUT_DIR="./output/spatial_word_embedding"
-SAVE_DIFF_VECTORS=""
+SAVE_DIFF_VECTORS="--save_diff_vectors"
 
 # ---------- 默认模型列表 (格式: "模型路径::别名" 用空格分隔) ----------
 # 别名用于输出文件命名; 若省略别名则从路径自动提取
@@ -123,7 +123,7 @@ echo "  批量运行 spatial_word_embedding.py"
 echo "============================================"
 echo "  数据文件:     ${DATA_FILE}"
 echo "  输出目录:     ${OUTPUT_DIR}"
-echo "  保存差异向量: ${SAVE_DIFF_VECTORS:-否}"
+echo "  保存差异向量: ${SAVE_DIFF_VECTORS:-是}"
 echo "  Python:       $(which python)"
 echo "  模型数量:     ${#MODEL_ENTRIES[@]}"
 echo "============================================"

@@ -16,13 +16,14 @@ import read_data
 from difflib import SequenceMatcher
 import argparse
 import os
-import pickle
+import json
 import numpy as np
 import pandas as pd
 import scipy.stats
 import torch
 import torch.nn.functional as F
 
+WORD_EMBEDDING_PROMPT = r'被重复句:"{sentence}";重复句:"{sentence}"'
 
 def get_diff(seq1: list[int], seq2: list[int]) -> list[tuple[slice, slice]]:
     """找出两个分词序列之间的差异区域。
@@ -75,17 +76,21 @@ def build_diff_vector_record(
     diff_regions: list[tuple[slice, slice]],
     hidden_states: tuple[torch.Tensor, ...] | None,
     num_layers: int,
+    split1: int = 0,
+    split2: int = 0,
 ) -> dict:
     """为单个样本构建包含原始数据与差异向量的字典记录。
 
     Args:
         idx: 样本序号。
         record: 原始数据记录（SpatialDataset 中的一条）。
-        s1_ids / s2_ids: 两句的 token id 序列（不含 padding）。
-        s1_tokens / s2_tokens: 两句的 token 字符串列表。
+        s1_ids / s2_ids: 两句的 token id 序列（不含 padding，基于原始句子）。
+        s1_tokens / s2_tokens: 两句的 token 字符串列表（基于原始句子）。
         diff_regions: get_diff 返回的差异区域列表。
         hidden_states: 模型编码输出的 hidden_states 元组，每层 shape (2, L_max, D)。
         num_layers: 总层数（含 embedding 层）。
+        split1 / split2: 两句在 prompted 文本中第二半部分的起始 token 位置，
+            用于将原始句子 token 索引映射到 prompted 序列位置。
 
     Returns:
         字典，包含原始数据字段、差异区域信息、以及各层差异均值向量。
@@ -125,21 +130,25 @@ def build_diff_vector_record(
             record_dict[f"layer_{layer}_s2_diff_mean"] = None
         return record_dict
 
-    # 收集差异区域索引
-    s1_diff_indices = collect_diff_indices(diff_regions, side=0)
-    s2_diff_indices = collect_diff_indices(diff_regions, side=1)
+    # 收集差异区域索引（基于原始句子 token 位置）
+    s1_diff_indices_raw = collect_diff_indices(diff_regions, side=0)
+    s2_diff_indices_raw = collect_diff_indices(diff_regions, side=1)
+
+    # 将原始句子 token 索引映射到 prompted 文本第二半部分的位置
+    s1_diff_indices = [i + split1 for i in s1_diff_indices_raw] if s1_diff_indices_raw else []
+    s2_diff_indices = [i + split2 for i in s2_diff_indices_raw] if s2_diff_indices_raw else []
 
     for layer in range(num_layers):
         layer_hs = hidden_states[layer]  # (2, L_max, D)
         if s1_diff_indices:
             s1_diff = layer_hs[0, s1_diff_indices, :]  # (n1_diff, D)
-            s1_mean = s1_diff.mean(dim=0).cpu().numpy()
+            s1_mean = s1_diff.mean(dim=0).cpu().tolist()
         else:
             s1_mean = None
 
         if s2_diff_indices:
             s2_diff = layer_hs[1, s2_diff_indices, :]  # (n2_diff, D)
-            s2_mean = s2_diff.mean(dim=0).cpu().numpy()
+            s2_mean = s2_diff.mean(dim=0).cpu().tolist()
         else:
             s2_mean = None
 
@@ -158,8 +167,8 @@ def main():
     argparser.add_argument(
         "--save_diff_vectors",
         action="store_true",
-        default=False,
-        help="保存每个样本的差异区域向量及原始数据到 .pkl 文件",
+        default=True,
+        help="保存每个样本的差异区域向量及原始数据到 .json 文件",
     )
 
     args = argparser.parse_args()
@@ -173,14 +182,7 @@ def main():
 
     labels = np.array(data.labels)
 
-    # 先用第一条数据探测 hidden_states 的实际层数（含 embedding 层）
-    first_s1, first_s2 = data.sentences[0]
-    with torch.no_grad():
-        first_tokens = extractor.tokenizer(
-            [first_s1], add_special_tokens=False, return_tensors="pt"
-        )
-        first_hs = extractor.encode(first_tokens).hidden_states
-    num_layers = len(first_hs)
+    num_layers = extractor.get_model_info()['num_hidden_states'] # 包含 embedding 层
 
     cosine_sim_matrix = np.zeros((len(data.sentences), num_layers))
 
@@ -200,24 +202,51 @@ def main():
     for idx, record in iterator:
         sentence1, sentence2 = record.sentence1, record.sentence2
 
-        # ── 批量分词：两句一起 tokenize，减少后续 encode 调用次数 ──
-        batch_tokens = extractor.tokenizer(
+        # ── Step 1: 对原始句子（无 prompt）分词，用于 diff 比较 ──
+        raw_batch = extractor.tokenizer(
             [sentence1, sentence2],
             add_special_tokens=False,
             return_tensors="pt",
             padding=True,
         )
-        attn_mask = batch_tokens.attention_mask  # (2, L_max)
-        s1_len = int(attn_mask[0].sum().item())
-        s2_len = int(attn_mask[1].sum().item())
+        raw_mask = raw_batch.attention_mask  # (2, L_max)
+        s1_len = int(raw_mask[0].sum().item())
+        s2_len = int(raw_mask[1].sum().item())
 
         # 仅取非 padding 部分的 token id 做 diff 比较
-        s1_ids = batch_tokens.input_ids[0, :s1_len].tolist()
-        s2_ids = batch_tokens.input_ids[1, :s2_len].tolist()
+        s1_ids = raw_batch.input_ids[0, :s1_len].tolist()
+        s2_ids = raw_batch.input_ids[1, :s2_len].tolist()
 
         # 解码为 token 字符串（用于记录）
         s1_tokens = extractor.tokenizer.convert_ids_to_tokens(s1_ids)
         s2_tokens = extractor.tokenizer.convert_ids_to_tokens(s2_ids)
+
+        # ── Step 2: 将句子嵌套到 WORD_EMBEDDING_PROMPT 中 ──
+        prompt1 = WORD_EMBEDDING_PROMPT.format(sentence=sentence1)
+        prompt2 = WORD_EMBEDDING_PROMPT.format(sentence=sentence2)
+
+        # ── Step 3: 对 prompted 文本分词，用于模型编码 ──
+        batch_tokens = extractor.tokenizer(
+            [prompt1, prompt2],
+            add_special_tokens=False,
+            return_tensors="pt",
+            padding=True,
+        )
+
+        # ── Step 4: 计算第二半部分的起始位置（舍弃前半部分） ──
+        # prompt 格式: 被重复句:"{sentence}";重复句:"{sentence}"
+        # 前半部分: 被重复句:"{sentence}";
+        # 后半部分: 重复句:"{sentence}"  ← 只取这部分向量
+        prefix1 = f'被重复句:"{sentence1}";重复句:"'
+        prefix2 = f'被重复句:"{sentence2}";重复句:"'
+        prefix_tokens = extractor.tokenizer(
+            [prefix1, prefix2],
+            add_special_tokens=False,
+            return_tensors="pt",
+            padding=True,
+        )
+        split1 = int(prefix_tokens.attention_mask[0].sum().item())
+        split2 = int(prefix_tokens.attention_mask[1].sum().item())
 
         # ── 找出差异区域 ──
         diff_regions = get_diff(s1_ids, s2_ids)
@@ -230,15 +259,16 @@ def main():
                     build_diff_vector_record(
                         idx, record, s1_ids, s2_ids, s1_tokens, s2_tokens,
                         diff_regions, None, num_layers,
+                        split1=split1, split2=split2,
                     )
                 )
             continue
 
-        # ── 收集差异区域索引 ──
-        s1_diff_indices = collect_diff_indices(diff_regions, side=0)
-        s2_diff_indices = collect_diff_indices(diff_regions, side=1)
+        # ── 收集差异区域索引（基于原始句子 token 位置） ──
+        s1_diff_indices_raw = collect_diff_indices(diff_regions, side=0)
+        s2_diff_indices_raw = collect_diff_indices(diff_regions, side=1)
 
-        if not s1_diff_indices or not s2_diff_indices:
+        if not s1_diff_indices_raw or not s2_diff_indices_raw:
             # 某一句没有差异 token（如纯插入/删除）→ 相似度为 0.0
             cosine_sim_matrix[idx, :] = 0.0
             if args.save_diff_vectors:
@@ -246,15 +276,20 @@ def main():
                     build_diff_vector_record(
                         idx, record, s1_ids, s2_ids, s1_tokens, s2_tokens,
                         diff_regions, None, num_layers,
+                        split1=split1, split2=split2,
                     )
                 )
             continue
 
-        # ── 批量编码：一次前向传播同时处理两句 ──
+        # 将原始句子 token 索引映射到 prompted 文本的后半部分位置
+        s1_diff_indices = [i + split1 for i in s1_diff_indices_raw]
+        s2_diff_indices = [i + split2 for i in s2_diff_indices_raw]
+
+        # ── 批量编码：一次前向传播同时处理两句 prompted 文本 ──
         with torch.no_grad():
             hs = extractor.encode(batch_tokens).hidden_states  # tuple of (2, L_max, D)
 
-        # ── 逐层计算差异区域均值向量的余弦相似度 ──
+        # ── 逐层计算差异区域均值向量的余弦相似度（仅使用后半部分向量） ──
         for layer in range(num_layers):
             layer_hs = hs[layer]  # (2, L_max, D)
             s1_diff = layer_hs[0, s1_diff_indices, :]  # (n1_diff, D)
@@ -277,11 +312,12 @@ def main():
                 build_diff_vector_record(
                     idx, record, s1_ids, s2_ids, s1_tokens, s2_tokens,
                     diff_regions, hs, num_layers,
+                    split1=split1, split2=split2,
                 )
             )
 
         # 显式释放 GPU 显存，避免随循环累积
-        del hs, batch_tokens
+        del hs, batch_tokens, raw_batch, prefix_tokens
 
     # ── 保存相似度矩阵 ──
     df = pd.DataFrame(
@@ -321,10 +357,10 @@ def main():
     if args.save_diff_vectors:
         vec_path = os.path.join(
             args.output_dir,
-            f"spatial_diff_vectors_{args.model_alias}.pkl",
+            f"spatial_diff_vectors_{args.model_alias}.json",
         )
-        with open(vec_path, "wb") as f:
-            pickle.dump(diff_vector_dataset, f)
+        with open(vec_path, "w", encoding="utf-8") as f:
+            json.dump(diff_vector_dataset, f, ensure_ascii=False)
         print(f"[信息] 已保存差异向量数据集到 {vec_path} "
               f"({len(diff_vector_dataset)} 条记录)")
 
