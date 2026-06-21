@@ -360,6 +360,114 @@ class HiddenInfoExtractor:
     # ==================================================================
 
     @staticmethod
+    def get_token_embedding_from_slice(
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor,
+        slice_spec: Union[slice, list[int], tuple[int, int], tuple[int, int, int]],
+        *,
+        input_ids: Optional[torch.Tensor] = None,
+        return_numpy: bool = True,
+    ) -> np.ndarray | torch.Tensor:
+        """根据切片值，从 hidden_states 中提取指定位置 token 的嵌入向量并取算术平均。
+
+        支持多种切片规格形式：
+        - Python slice 对象: slice(2, 5)、slice(0, -1)
+        - 元组 (start, end): (2, 5) 或 (start, end, step): (0, 10, 2)
+        - 显式索引列表: [0, 3, 5, 7]
+
+        仅对有效 token（attention_mask=1）的嵌入做平均，padding token 会被自动排除。
+        若切片范围内无有效 token，则返回零向量。
+
+        Args:
+            hidden_states:  shape = (batch_size, seq_len, hidden_dim) 或 (seq_len, hidden_dim)
+            attention_mask: shape = (batch_size, seq_len) 或 (seq_len,) —— 1=有效token, 0=padding
+            slice_spec:     切片规格，支持 slice / tuple(start, end[, step]) / 索引列表
+            input_ids:      可选，token ID 张量 (batch, seq_len)，仅供调用方调试校验
+            return_numpy:   返回 numpy 数组（True）还是 torch Tensor（False）
+
+        Returns:
+            切片范围内有效 token 嵌入向量的算术均值:
+            - 输入为 batch: (batch_size, hidden_dim)
+            - 输入为单句:   (hidden_dim,)
+
+        Example:
+            >>> extractor = HiddenInfoExtractor("path/to/model")
+            >>> inputs = extractor.tokenize("一只猫坐在垫子上")
+            >>> outputs = extractor.encode(inputs)
+            >>> # 取最后一层 hidden state
+            >>> hs = outputs.hidden_states[-1]  # (1, seq_len, hidden_dim)
+            >>> # 取第 2~5 个 token 的嵌入均值（Python slice 风格）
+            >>> vec = HiddenInfoExtractor.get_token_embedding_from_slice(
+            ...     hs, inputs["attention_mask"], slice(2, 5)
+            ... )
+            >>> # 用元组方式等价表达
+            >>> vec = HiddenInfoExtractor.get_token_embedding_from_slice(
+            ...     hs, inputs["attention_mask"], (2, 5)
+            ... )
+            >>> # 取指定位置列表
+            >>> vec = HiddenInfoExtractor.get_token_embedding_from_slice(
+            ...     hs, inputs["attention_mask"], [0, 2, 4]
+            ... )
+        """
+        # ── 统一为 3D: (batch_size, seq_len, hidden_dim) ──
+        squeeze_output = False
+        if hidden_states.ndim == 2:
+            hidden_states = hidden_states.unsqueeze(0)
+            squeeze_output = True
+        if attention_mask.ndim == 1:
+            attention_mask = attention_mask.unsqueeze(0)
+
+        batch_size, seq_len, hidden_dim = hidden_states.shape
+
+        # ── 将切片规格解析为位置索引列表 ──
+        if isinstance(slice_spec, slice):
+            indices = list(range(seq_len))[slice_spec]
+        elif isinstance(slice_spec, tuple):
+            indices = list(range(seq_len))[slice(*slice_spec)]
+        elif isinstance(slice_spec, list):
+            indices = slice_spec
+        else:
+            raise TypeError(
+                f"slice_spec 类型不支持: {type(slice_spec)}。"
+                f"请使用 slice、tuple(start, end[, step]) 或索引列表。"
+            )
+
+        if len(indices) == 0:
+            # 切片为空列表 → 返回零向量
+            target_device = hidden_states.device
+            result = torch.zeros(batch_size, hidden_dim, device=target_device)
+            if squeeze_output:
+                result = result.squeeze(0)
+            result = result.cpu()
+            if return_numpy:
+                return result.float().numpy()
+            return result
+
+        # 构建切片位置掩码 (batch_size, seq_len)
+        slice_mask = torch.zeros(batch_size, seq_len, device=hidden_states.device)
+        slice_mask[:, indices] = 1.0
+
+        # 与 attention_mask 取交集：只保留切片内且非 padding 的 token
+        attn_mask = attention_mask.float().to(hidden_states.device)
+        effective_mask = slice_mask * attn_mask       # (batch_size, seq_len)
+
+        # ── 算术平均 ──
+        mask_expanded = effective_mask.unsqueeze(-1)   # (batch, seq_len, 1)
+        masked = hidden_states * mask_expanded
+        summed = masked.sum(dim=1)                      # (batch, hidden_dim)
+        counts = mask_expanded.sum(dim=1).clamp(min=1)  # (batch, 1)，避免除以零
+
+        result = summed / counts
+
+        if squeeze_output:
+            result = result.squeeze(0)
+
+        result = result.cpu()
+        if return_numpy:
+            return result.float().numpy()
+        return result
+
+    @staticmethod
     def extract_sentence_embedding(
         hidden_states: tuple,
         attention_mask: torch.Tensor,
