@@ -14,10 +14,10 @@
 set -euo pipefail
 
 # ---------- 默认参数 ----------
-DATA_FILE="spatial_dataset.json"
-MODEL_NAME_OR_PATH="bert-base-chinese"
-MODEL_ALIAS=""
-OUTPUT_DIR="./output"
+DATA_FILE="./spatial_info_annotation/spatial_dataset_deepseek-v4-pro_20260618-143434_modified.json"
+MODEL_NAME_OR_PATH="/root/autodl-fs/llm_models/Qwen3.5-9B"
+MODEL_ALIAS="Qwen3.5-9B"
+OUTPUT_DIR="./output/${MODEL_ALIAS}"
 
 # ---------- 脚本所在目录 ----------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

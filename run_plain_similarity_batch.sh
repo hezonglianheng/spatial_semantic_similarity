@@ -21,15 +21,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ---------- 默认参数 ----------
-DATA_FILE="spatial_dataset.json"
+DATA_FILE="spatial_info_annotation/spatial_dataset_deepseek-v4-pro_20260618-143434_modified.json"
 OUTPUT_DIR="./output"
 
 # ---------- 默认模型列表 (格式: "模型路径::别名" 用空格分隔) ----------
 # 别名用于输出文件命名; 若省略别名则从路径自动提取
 DEFAULT_MODELS=(
-    "bert-base-chinese::bert-chinese"
-    # "Qwen/Qwen2-0.5B::qwen2-0.5b"
-    # "sentence-transformers/all-MiniLM-L6-v2::minilm-l6"
+    "/root/autodl-fs/llm_models/Qwen3.5-9B::Qwen3.5-9B"
+    "/root/autodl-tmp/models/llama31-8b::llama-31-8b"
+    "/root/autodl-fs/llm_models/Qwen2.5-7B::Qwen2.5-7B"
+    "/root/autodl-fs/llm_models/Qwen3-8B::Qwen3-8B"
 )
 
 # ---------- 帮助信息 ----------

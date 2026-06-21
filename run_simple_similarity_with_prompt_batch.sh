@@ -22,14 +22,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ---------- 默认参数 ----------
 DATA_FILE="spatial_dataset.json"
-OUTPUT_DIR="./output"
+OUTPUT_DIR="./output/simple"
 
 # ---------- 默认模型列表 (格式: "模型路径::别名" 用空格分隔) ----------
 # 别名用于输出文件命名; 若省略别名则从路径自动提取
 DEFAULT_MODELS=(
-    "bert-base-chinese::bert-chinese"
-    # "Qwen/Qwen2-0.5B::qwen2-0.5b"
-    # "sentence-transformers/all-MiniLM-L6-v2::minilm-l6"
+    "/root/autodl-fs/llm_models/Qwen3.5-9B::Qwen3.5-9B"
+    "/root/autodl-fs/llm_models/Qwen2.5-7B::Qwen2.5-7B"
+    "/root/autodl-fs/llm_models/Qwen3-8B::Qwen3-8B"
+    "/root/autodl-fs/llm_models/GLM-4-9B-0414::GLM-4-9B-0414"
 )
 
 # ---------- 帮助信息 ----------
