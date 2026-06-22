@@ -167,7 +167,6 @@ mkdir -p "${OUTPUT_DIR}"
 # ---------- 构建 python 命令的公共参数 ----------
 PYTHON_ARGS=(
     --data_file "${DATA_FILE}"
-    --output_dir "${OUTPUT_DIR}"
 )
 
 if [[ -n "${AGGREGATE}" ]]; then
@@ -229,11 +228,14 @@ for csv_file in "${CSV_FILES[@]}"; do
     CURRENT=$((CURRENT + 1))
 
     MODEL_ALIAS=$(extract_alias "${csv_file}")
+    MODEL_OUTPUT_DIR="${OUTPUT_DIR}/${MODEL_ALIAS}"
+    mkdir -p "${MODEL_OUTPUT_DIR}"
 
     echo ""
     echo "============================================"
     echo "  [${CURRENT}/${TOTAL}] 别名: ${MODEL_ALIAS}"
     echo "       文件: $(basename "${csv_file}")"
+    echo "       输出: ${MODEL_OUTPUT_DIR}"
     echo "============================================"
     echo ""
 
@@ -242,9 +244,10 @@ for csv_file in "${CSV_FILES[@]}"; do
     if python logistic_regression.py \
         --similarities "${csv_file}" \
         --model_alias "${MODEL_ALIAS}" \
+        --output_dir "${MODEL_OUTPUT_DIR}" \
         "${PYTHON_ARGS[@]}"; then
         echo ""
-        echo "[完成] ${MODEL_ALIAS} → ${OUTPUT_DIR}/"
+        echo "[完成] ${MODEL_ALIAS} → ${MODEL_OUTPUT_DIR}/"
     else
         echo ""
         echo "[失败] ${MODEL_ALIAS} (${csv_file}) 运行出错, 继续下一个..."
@@ -264,8 +267,13 @@ if [[ ${#FAILED_FILES[@]} -gt 0 ]]; then
         echo "    - ${f}"
     done
 fi
-echo "  结果目录: ${OUTPUT_DIR}/"
+echo "  结果目录: ${OUTPUT_DIR}/<模型别名>/"
 echo ""
 echo "  结果文件:"
-ls -1 "${OUTPUT_DIR}"/logistic_summary_*.csv 2>/dev/null || echo "    (暂无)"
+find "${OUTPUT_DIR}" -maxdepth 2 -name "logistic_summary_*.csv" -type f 2>/dev/null | sort | while read f; do
+    echo "    ${f#${OUTPUT_DIR}/}"
+done
+if [[ -z $(find "${OUTPUT_DIR}" -maxdepth 2 -name "logistic_summary_*.csv" -type f 2>/dev/null) ]]; then
+    echo "    (暂无)"
+fi
 echo "============================================"
