@@ -36,6 +36,79 @@ import matplotlib.pyplot as plt
 
 
 # ══════════════════════════════════════════════════════════════════════
+# 中文字体检测与配置（跨平台：Windows / Linux / macOS）
+# ══════════════════════════════════════════════════════════════════════
+
+def _setup_chinese_font():
+    """检测系统中可用的中文字体并配置 matplotlib。
+
+    按优先级尝试各平台常见中文字体，找到第一个实际安装的字体即采用。
+    若全部未找到，打印安装提示并回退到默认字体。
+    """
+    from matplotlib.font_manager import FontManager
+
+    # 获取系统已安装的字体名称集合
+    _fm = FontManager()
+    _available_fonts = {f.name for f in _fm.ttflist}
+
+    # 跨平台中文字体优先级列表
+    _CJK_CANDIDATES = [
+        # --- Linux ---
+        "Noto Sans CJK SC",        # Debian/Ubuntu: fonts-noto-cjk
+        "Noto Sans SC",            # 部分发行版
+        "Source Han Sans SC",      # Adobe 思源黑体
+        "WenQuanYi Micro Hei",     # 文泉驿微米黑（轻量，常见）
+        "WenQuanYi Zen Hei",       # 文泉驿正黑
+        "AR PL UMing CN",          # AR PL 明体
+        "AR PL UKai CN",           # AR PL 楷体
+        "Noto Serif CJK SC",       # 思源宋体
+        # --- macOS ---
+        "Heiti SC",                # 黑体-简
+        "STHeiti",                 # 华文黑体
+        "PingFang SC",             # 苹方
+        "Songti SC",               # 宋体-简
+        "STSong",                  # 华文宋体
+        # --- Windows ---
+        "Microsoft YaHei",         # 微软雅黑
+        "SimHei",                  # 黑体
+        "SimSun",                  # 宋体
+        "FangSong",                # 仿宋
+        "KaiTi",                   # 楷体
+    ]
+
+    _selected = None
+    for _font in _CJK_CANDIDATES:
+        if _font in _available_fonts:
+            _selected = _font
+            break
+
+    if _selected:
+        plt.rcParams["font.sans-serif"] = [_selected, "DejaVu Sans", "sans-serif"]
+        plt.rcParams["axes.unicode_minus"] = False
+        print(f"[字体] 使用中文字体: {_selected}")
+    else:
+        # 回退：仍然尝试通过 font.sans-serif 让系统自行匹配
+        plt.rcParams["font.sans-serif"] = _CJK_CANDIDATES + ["DejaVu Sans", "sans-serif"]
+        plt.rcParams["axes.unicode_minus"] = False
+
+        # 给出安装建议
+        _hint_lines = [
+            "未检测到已安装的中文字体，图表中文可能显示为方块。",
+            "请按以下方式安装中文字体：",
+            "  Debian/Ubuntu:  sudo apt install fonts-noto-cjk fonts-wqy-microhei",
+            "  CentOS/RHEL:    sudo yum install google-noto-cjk-fonts wqy-microhei-fonts",
+            "  Arch:           sudo pacman -S noto-fonts-cjk wqy-microhei",
+            "  macOS:          系统自带中文字体，无需额外安装",
+            "  Windows:        系统自带中文字体，无需额外安装",
+            "安装后删除 matplotlib 字体缓存: rm -rf ~/.cache/matplotlib",
+        ]
+        print("[字体] " + "\n[字体] ".join(_hint_lines))
+
+
+_setup_chinese_font()
+
+
+# ══════════════════════════════════════════════════════════════════════
 # 常量
 # ══════════════════════════════════════════════════════════════════════
 
@@ -399,6 +472,55 @@ def main():
             if base is None:
                 continue
             base_word_labels[base].append(word)
+
+    # ── 漏斗诊断：逐层统计数据损失 ──
+    total_selected = len(selected)
+    records_with_dash = 0
+    records_without_dash = 0
+    total_word_instances = 0       # 所有 pair 拆分后的词实例总数
+    lost_not_encodable = 0         # 损失：词不含基础空间字符（从未编码）
+    lost_encode_failed = 0         # 损失：词编码失败（不在 cache 中）
+    lost_no_base = 0               # 损失：词无法映射到基础空间词
+    kept_instances = 0             # 最终保留 = PCA 图中的点数
+
+    for rec in selected:
+        pair = rec.pair
+        if "-" not in pair:
+            records_without_dash += 1
+            continue
+        records_with_dash += 1
+        parts = pair.split("-", 1)
+        for word in parts:
+            total_word_instances += 1
+            # 检查这个词是否属于不可编码的类别（从未尝试编码）
+            if extract_base(word) is None:
+                lost_not_encodable += 1
+                continue
+            if word not in word_all_layer_cache:
+                lost_encode_failed += 1
+                continue
+            # 二次 base 检查（理论上与上面一致，保留为安全网）
+            if extract_base(word) is None:
+                lost_no_base += 1
+                continue
+            kept_instances += 1
+
+    print(f"\n[诊断] ═══════════════════ 数据漏斗 ═══════════════════")
+    print(f"  筛选记录总数:           {total_selected:>6} 条")
+    print(f"  含 '-' 的记录:          {records_with_dash:>6} 条  "
+          f"(每记录拆为 2 词 → 预期 {records_with_dash * 2} 个词实例)")
+    if records_without_dash:
+        print(f"  不含 '-' 的记录:        {records_without_dash:>6} 条  (已丢弃，不参与 PCA)")
+    print(f"  ─────────────────────────────────────────────")
+    print(f"  实际词实例总数:         {total_word_instances:>6} 个")
+    print(f"  损失-不含基础字符:      {lost_not_encodable:>6} 个  (词中无 "
+          f"{'/'.join(TARGET_BASES)} 任一字符)")
+    print(f"  损失-编码失败:          {lost_encode_failed:>6} 个  (不在编码缓存中)")
+    if lost_no_base:
+        print(f"  损失-无法映射基础词:    {lost_no_base:>6} 个")
+    print(f"  ─────────────────────────────────────────────")
+    print(f"  ★ 最终 PCA 点数:        {kept_instances:>6} 个")
+    print(f"[诊断] ═══════════════════════════════════════════")
 
     # 打印各基础空间词的原始词分布
     print(f"\n[统计] 各基础空间词包含的原始空间词：")

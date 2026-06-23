@@ -142,7 +142,7 @@ for entry in "${MODELS[@]}"; do
         --model_name_or_path "$model_path" \
         --model_alias "$model_alias" \
         --output_dir "$output_dir" \
-        --no_show
+        --no_show \
         --layer "$LAYER"
     exit_code=$?
     set -e
