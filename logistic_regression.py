@@ -32,6 +32,7 @@
 
 import argparse
 import os
+import re
 import sys
 import warnings
 
@@ -595,6 +596,16 @@ def main():
     # 确定分析范围
     # ------------------------------------------------------------------
     layer_indices = args.layers if args.layers is not None else list(range(n_layers))
+
+    # ------------------------------------------------------------------
+    # 根据相似度文件名称匹配变项，自动创建子目录
+    # ------------------------------------------------------------------
+    sim_basename = os.path.basename(args.similarities)
+    match = re.match(r"similarities_(.*)\.csv", sim_basename)
+    if match:
+        variant = match.group(1)
+        args.output_dir = os.path.join(args.output_dir, variant)
+        print(f"[信息] 匹配到变项 \"{variant}\"，输出目录调整为: {args.output_dir}")
 
     # ------------------------------------------------------------------
     # 创建输出目录
