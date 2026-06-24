@@ -100,8 +100,9 @@ Y_COLUMNS="accuracy"
 # Y_COLUMNS="accuracy spearman_corr pearson_corr"
 
 # 分组列（可选）。按此列的不同值分组，每组画一条折线（不同颜色）
+# 多文件合并时使用 _source_file 可按文件区分颜色
 GROUP_BY=""
-# 示例: GROUP_BY="strategy"
+# 示例: GROUP_BY="strategy"   GROUP_BY="_source_file"
 
 # ---------------------------------------------------------------------------
 # 1.4 输出设置
@@ -146,6 +147,12 @@ LINE_WIDTH=1.8
 
 # 图例位置: best | upper right | lower left | center | ...
 LEGEND_LOC="best"
+
+# 是否将图例放置在绘图区域外侧（true = 外侧，false = 内侧）
+LEGEND_OUTSIDE=false
+
+# 图例外侧锚点坐标（仅 LEGEND_OUTSIDE=true 时生效），格式: "x y"
+LEGEND_BBOX="1.02 1.0"
 
 # 是否显示网格（true = 显示，false = 隐藏）
 SHOW_GRID=true
@@ -248,6 +255,15 @@ CMD+=("--marker" "$MARKER")
 CMD+=("--markersize" "$MARKER_SIZE")
 CMD+=("--linewidth" "$LINE_WIDTH")
 CMD+=("--legend_loc" "$LEGEND_LOC")
+
+if [ "$LEGEND_OUTSIDE" = true ]; then
+    CMD+=("--legend_outside")
+    # 解析 LEGEND_BBOX 为两个参数
+    if [ -n "$LEGEND_BBOX" ]; then
+        IFS=' ' read -ra bbox_parts <<< "$LEGEND_BBOX"
+        CMD+=("--legend_bbox" "${bbox_parts[@]}")
+    fi
+fi
 
 if [ "$SHOW_GRID" = false ]; then
     CMD+=("--no_grid")

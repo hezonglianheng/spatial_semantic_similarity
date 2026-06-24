@@ -7,25 +7,45 @@
   1. 批量读入 CSV 文件，自动合并或分文件保留
   2. 按指定列和条件筛选行 —— 支持数字范围（等于、大于、小于、区间等）
      以及文字/类别匹配
-  3. 根据筛选结果绘制折线图，x/y 轴范围由数据自动计算（可加边距）
+  3. 支持按文件分别筛选：不同 CSV 文件可应用不同的筛选条件
+  4. 不同来源文件的数据使用不同颜色绘制在同一图上
+  5. 支持图例放置在绘图区域外侧（--legend_outside）
+  6. 根据筛选结果绘制折线图，x/y 轴范围由数据自动计算（可加边距）
 
 用法示例：
   # === 命令行 ===
+  # 基本用法：多文件合并，按 _source_file 分组，图例在外
   python draw_figure.py \
       --csv_files results_qwen.csv results_llama.csv \
       --filters "accuracy > 0.5" "strategy == mean" \
       --x_column layer --y_columns accuracy spearman_corr \
-      --group_by strategy \
+      --group_by _source_file \
+      --legend_outside \
+      --output figure.png
+
+  # 按文件分别筛选：不同文件使用不同的筛选条件
+  python draw_figure.py \
+      --csv_files results_qwen.csv results_llama.csv \
+      --file_filters "results_qwen.csv:accuracy > 0.5" \
+                      "results_llama.csv:accuracy > 0.7, strategy == mean" \
+      --x_column layer --y_columns accuracy \
+      --group_by _source_file \
+      --legend_outside \
       --output figure.png
 
   # === Python API ===
   from draw_figure import CSVDataLoader, FilterCondition, LineChartPlotter
 
-  loader = CSVDataLoader(["a.csv", "b.csv"])
+  loader = CSVDataLoader(
+      ["a.csv", "b.csv"],
+      file_filters={
+          "a.csv": ["accuracy > 0.5"],
+          "b.csv": ["accuracy > 0.7"],
+      },
+  )
   df = loader.load()
 
   filtered = FilterCondition.apply(df, [
-      ("accuracy", ">", 0.5),
       ("strategy", "==", "mean"),
   ])
 
@@ -33,7 +53,8 @@
   plotter.plot(
       x_column="layer",
       y_columns=["accuracy", "spearman_corr"],
-      group_by="strategy",
+      group_by="_source_file",
+      legend_outside=True,
       output_path="figure.png",
   )
 """
@@ -376,6 +397,8 @@ class LineChartPlotter:
         y_padding: float = 0.10,
         figsize: tuple[float, float] = (10, 6),
         legend_loc: str = "best",
+        legend_outside: bool = False,
+        legend_bbox: tuple[float, float] = (1.02, 1.0),
         marker: str = "o",
         markersize: int = 5,
         linewidth: float = 1.8,
@@ -387,24 +410,26 @@ class LineChartPlotter:
         """绘制折线图。
 
         参数:
-            x_column:    用作 x 轴的列名
-            y_columns:   用作 y 轴的列名（一个或多个）
-            group_by:    按此列分组，每组画一条折线
-            output_path: 若提供，保存图片至此路径（支持 .png / .pdf / .svg）
-            title:       图表标题
-            x_label:     x 轴标签（默认使用列名）
-            y_labels:    y 轴标签（默认使用列名，多条时对应列表）
-            x_padding:   x 轴范围边距比例（0.05 = 5%）
-            y_padding:   y 轴范围边距比例
-            figsize:     图像大小 (宽, 高) 英寸
-            legend_loc:  图例位置
-            marker:      折线图标记样式
-            markersize:  标记大小
-            linewidth:   线宽
-            subplots:    True 时每条 y 列绘制独立子图
-            colors:      自定义颜色列表
-            show_grid:   是否显示网格
-            dpi:         图像分辨率
+            x_column:      用作 x 轴的列名
+            y_columns:     用作 y 轴的列名（一个或多个）
+            group_by:      按此列分组，每组画一条折线
+            output_path:   若提供，保存图片至此路径（支持 .png / .pdf / .svg）
+            title:         图表标题
+            x_label:       x 轴标签（默认使用列名）
+            y_labels:      y 轴标签（默认使用列名，多条时对应列表）
+            x_padding:     x 轴范围边距比例（0.05 = 5%）
+            y_padding:     y 轴范围边距比例
+            figsize:       图像大小 (宽, 高) 英寸
+            legend_loc:    图例位置（legend_outside=True 时仅作参考）
+            legend_outside: True 时图例放置在绘图区域外侧
+            legend_bbox:   图例外侧放置时的锚点坐标（默认 (1.02, 1.0) 即右上外侧）
+            marker:        折线图标记样式
+            markersize:    标记大小
+            linewidth:     线宽
+            subplots:      True 时每条 y 列绘制独立子图
+            colors:        自定义颜色列表
+            show_grid:     是否显示网格
+            dpi:           图像分辨率
 
         返回:
             matplotlib Figure 对象
@@ -432,6 +457,13 @@ class LineChartPlotter:
             n_groups = len(group_names)
         else:
             n_groups = 1
+
+        # ---- 颜色映射：无自定义颜色时使用 tab10 / tab20 调色板 ----
+        if colors is None and group_by and n_groups > 1:
+            cmap = plt.cm.tab10 if n_groups <= 10 else plt.cm.tab20
+            colors = [cmap(i % cmap.N) for i in range(n_groups)]
+        elif colors is None:
+            colors = [None]  # 让 matplotlib 自行处理
 
         # ---- 创建图像 ----
         with plt.style.context(self.style):
@@ -489,7 +521,15 @@ class LineChartPlotter:
                 if show_grid:
                     ax.grid(True, alpha=0.4, linestyle="--")
                 if group_by and ax_idx == 0:
-                    ax.legend(loc=legend_loc)
+                    if legend_outside:
+                        ax.legend(
+                            loc="upper left",
+                            bbox_to_anchor=legend_bbox,
+                            borderaxespad=0.0,
+                            framealpha=0.9,
+                        )
+                    else:
+                        ax.legend(loc=legend_loc)
 
             # ---- 总标题 ----
             if title:
@@ -498,7 +538,13 @@ class LineChartPlotter:
                 y_names = ", ".join(y_columns)
                 fig.suptitle(f"{y_names} vs {x_column}", fontsize=15, fontweight="bold")
 
-            fig.tight_layout()
+            if legend_outside and group_by:
+                # 为外侧图例腾出右侧空间：right_margin 越小，图例空间越大
+                overflow = legend_bbox[0] - 1.0  # e.g. 1.02 → 0.02
+                right_margin = max(0.65, 0.84 - overflow * 2.5)
+                fig.tight_layout(rect=[0, 0, right_margin, 1])
+            else:
+                fig.tight_layout()
 
             # ---- 保存 ----
             if output_path:
@@ -651,6 +697,11 @@ def main():
   python draw_figure.py --csv_files a.csv b.csv --x layer --y accuracy
       --filters "strategy == mean"
 
+  # 多文件合并 + 按来源文件分组（不同颜色）+ 图例外侧
+  python draw_figure.py --csv_files results_qwen.csv results_llama.csv
+      --x layer --y accuracy --group_by _source_file --legend_outside
+      --output figure.png
+
   # 多条件筛选 + 按 prompt_group 分组画多条线
   python draw_figure.py --csv_files results.csv --x layer --y spearman_corr
       --filters "strategy == mean" "accuracy > 0.5" --group_by prompt_group
@@ -733,7 +784,15 @@ def main():
     )
     parser.add_argument(
         "--legend_loc", type=str, default="best",
-        help="图例位置（默认 best）",
+        help="图例位置（默认 best）。当 --legend_outside 时此参数仅作参考",
+    )
+    parser.add_argument(
+        "--legend_outside", action="store_true", default=False,
+        help="将图例放置在绘图区域外侧（右上角外侧）",
+    )
+    parser.add_argument(
+        "--legend_bbox", type=float, nargs=2, default=[1.02, 1.0],
+        help="图例外侧放置时的锚点坐标 (x y)，默认 1.02 1.0",
     )
     parser.add_argument(
         "--marker", type=str, default="o",
@@ -849,6 +908,8 @@ def main():
             y_padding=args.y_padding,
             figsize=tuple(args.figsize),
             legend_loc=args.legend_loc,
+            legend_outside=args.legend_outside,
+            legend_bbox=tuple(args.legend_bbox),
             marker=args.marker,
             markersize=args.markersize,
             linewidth=args.linewidth,
