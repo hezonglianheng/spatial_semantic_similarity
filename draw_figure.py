@@ -88,12 +88,17 @@ plt.rcParams.update({
 })
 
 # ---------------------------------------------------------------------------
-# 中文字体配置 —— 强制使用 SimHei 黑体
+# 中文字体配置 —— 直接使用 TTF 字体文件
 # ---------------------------------------------------------------------------
 
-plt.rcParams["font.sans-serif"] = ["SimHei", "DejaVu Sans", "sans-serif"]
+import matplotlib.font_manager as fm
+
+FONT_TTF_PATH = "/root/autodl-fs/simhei.ttf"
+fm.fontManager.addfont(FONT_TTF_PATH)
+_font_prop = fm.FontProperties(fname=FONT_TTF_PATH)
+plt.rcParams["font.family"] = _font_prop.get_name()
 plt.rcParams["axes.unicode_minus"] = False
-print("[字体] 强制使用 SimHei 黑体")
+print(f"[字体] 加载 TTF: {FONT_TTF_PATH} → {_font_prop.get_name()}")
 
 
 # ---------------------------------------------------------------------------
