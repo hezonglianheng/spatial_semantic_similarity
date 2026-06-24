@@ -44,9 +44,13 @@ import matplotlib.font_manager as fm
 FONT_TTF_PATH = "/root/autodl-fs/simhei.ttf"
 fm.fontManager.addfont(FONT_TTF_PATH)
 _font_prop = fm.FontProperties(fname=FONT_TTF_PATH)
-plt.rcParams["font.family"] = _font_prop.get_name()
+_font_name = _font_prop.get_name()
+# 关键：必须把字体名加入到 sans-serif 列表的最前面，而不是直接设置 font.family
+# 直接设 font.family = "SimHei" 会导致 matplotlib 找不到对应族而回退到 DejaVu Sans
+plt.rcParams["font.sans-serif"] = [_font_name] + plt.rcParams["font.sans-serif"]
+plt.rcParams["font.family"] = "sans-serif"
 plt.rcParams["axes.unicode_minus"] = False
-print(f"[字体] 加载 TTF: {FONT_TTF_PATH} → {_font_prop.get_name()}")
+print(f"[字体] 加载 TTF: {FONT_TTF_PATH} → {_font_name}")
 
 
 # ══════════════════════════════════════════════════════════════════════
