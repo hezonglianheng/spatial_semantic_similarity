@@ -558,9 +558,10 @@ class LineChartPlotter:
                 if group_by:
                     for i, (gname, gdf) in enumerate(groups):
                         color = colors[i % len(colors)] if colors else None
+                        legend_label = os.path.splitext(str(gname))[0].split("_")[-1]
                         self._draw_single_line(
                             ax, gdf, x_column, y_col,
-                            label=str(gname), color=color,
+                            label=legend_label, color=color,
                             marker=marker, markersize=markersize,
                             linewidth=linewidth,
                         )
