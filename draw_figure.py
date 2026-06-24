@@ -90,19 +90,74 @@ plt.rcParams.update({
 # ---------------------------------------------------------------------------
 # 中文字体配置 —— 直接使用 TTF 字体文件
 # ---------------------------------------------------------------------------
+#
+# 为什么不能只设 font.family = "SimHei"？
+# ─────────────────────────────────────
+# matplotlib 的字体解析不是按字体名直接查找，而是通过"通用族"体系：
+#   font.family = "sans-serif"
+#       → 查 font.sans-serif = ["DejaVu Sans", "Arial", ...]  按序尝试
+# 把 "SimHei" 直接赋给 font.family 会被当成一个不存在的通用族名，
+# matplotlib 找不到后回退到默认的 sans-serif 族 → DejaVu Sans。
+#
+# 为什么 plt.style.context() 也会导致问题？
+# ─────────────────────────────────────────
+# 即使使用 "default" 样式，plt.style.context() 也会加载样式中写死的
+# font.sans-serif 列表（如 ["DejaVu Sans", ...]），覆盖掉我们的设置。
+# 所以必须在样式上下文内部再次应用字体配置。
+#
+# 为什么 addfont() 后可能不生效？
+# ─────────────────────────────────
+# matplotlib 将字体列表缓存到磁盘（~/.cache/matplotlib/fontlist*.json）。
+# 如果缓存在 addfont() 之前已经存在，matplotlib 在渲染时可能使用缓存的
+# 字体列表，导致新添加的字体被忽略。必须先清除缓存再添加字体。
 
 import matplotlib.font_manager as fm
 
 FONT_TTF_PATH = "/root/autodl-fs/simhei.ttf"
+
+# ---- Step 1: 清除 matplotlib 字体缓存 ----
+_cache_cleared = False
+for _cache_base in (
+    matplotlib.get_cachedir(),
+    os.path.join(os.path.expanduser("~"), ".matplotlib"),
+    os.path.join(os.path.expanduser("~"), ".cache", "matplotlib"),
+):
+    if os.path.isdir(_cache_base):
+        for _fname in os.listdir(_cache_base):
+            if _fname.startswith("fontlist") or _fname.startswith("fontList"):
+                _cache_path = os.path.join(_cache_base, _fname)
+                try:
+                    os.remove(_cache_path)
+                    print(f"[字体] 删除字体缓存: {_cache_path}")
+                    _cache_cleared = True
+                except OSError:
+                    pass
+
+if _cache_cleared:
+    # 强制重建 FontManager，重新扫描系统所有字体
+    fm._load_fontmanager(try_read_cache=False)
+
+# ---- Step 2: 加载字体文件 ----
+if not os.path.exists(FONT_TTF_PATH):
+    raise FileNotFoundError(
+        f"字体文件不存在: {FONT_TTF_PATH}\n"
+        f"请确认 simhei.ttf 文件路径是否正确，或修改 FONT_TTF_PATH 变量。"
+    )
+
 fm.fontManager.addfont(FONT_TTF_PATH)
 _font_prop = fm.FontProperties(fname=FONT_TTF_PATH)
-_font_name = _font_prop.get_name()
-# 关键：必须把字体名加入到 sans-serif 列表的最前面，而不是直接设置 font.family
-# 直接设 font.family = "SimHei" 会导致 matplotlib 找不到对应族而回退到 DejaVu Sans
-plt.rcParams["font.sans-serif"] = [_font_name] + plt.rcParams["font.sans-serif"]
+_FONT_NAME = _font_prop.get_name()
+
+# ---- Step 3: 设置 matplotlib 全局字体 ----
+plt.rcParams["font.sans-serif"] = [_FONT_NAME] + plt.rcParams["font.sans-serif"]
 plt.rcParams["font.family"] = "sans-serif"
 plt.rcParams["axes.unicode_minus"] = False
-print(f"[字体] 加载 TTF: {FONT_TTF_PATH} → {_font_name}")
+
+print(f"[字体] 加载 TTF: {FONT_TTF_PATH} → {_FONT_NAME}")
+
+# 验证字体已正确注册到 fontManager
+_ttf_entries = [f for f in fm.fontManager.ttflist if f.name == _FONT_NAME]
+print(f"[字体] fontManager 中匹配 '{_FONT_NAME}' 的条目: {len(_ttf_entries)} 个")
 
 
 # ---------------------------------------------------------------------------
@@ -476,6 +531,11 @@ class LineChartPlotter:
 
         # ---- 创建图像 ----
         with plt.style.context(self.style):
+            # ⚠️ 样式上下文会用样式中写死的 font.sans-serif 覆盖全局设置，
+            # 必须在此重新应用中文字体配置（见文件顶部字体配置注释）
+            plt.rcParams["font.sans-serif"] = [_FONT_NAME] + plt.rcParams["font.sans-serif"]
+            plt.rcParams["font.family"] = "sans-serif"
+
             if subplots and len(y_columns) > 1:
                 fig, axes = plt.subplots(
                     len(y_columns), 1,
