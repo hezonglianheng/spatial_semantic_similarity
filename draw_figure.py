@@ -67,75 +67,12 @@ plt.rcParams.update({
 })
 
 # ---------------------------------------------------------------------------
-# 中文字体检测与配置（跨平台：Windows / Linux / macOS）
+# 中文字体配置 —— 强制使用 SimHei 黑体
 # ---------------------------------------------------------------------------
 
-def _setup_chinese_font():
-    """检测系统中可用的中文字体并配置 matplotlib。
-
-    按优先级尝试各平台常见中文字体，找到第一个实际安装的字体即采用。
-    若全部未找到，打印安装提示并回退到默认字体。
-    """
-    from matplotlib.font_manager import FontManager, findfont
-
-    # 获取系统已安装的字体名称集合
-    _fm = FontManager()
-    _available_fonts = {f.name for f in _fm.ttflist}
-
-    # 跨平台中文字体优先级列表
-    _CJK_CANDIDATES = [
-        # --- Linux ---
-        "Noto Sans CJK SC",        # Debian/Ubuntu: fonts-noto-cjk
-        "Noto Sans SC",            # 部分发行版
-        "Source Han Sans SC",      # Adobe 思源黑体
-        "WenQuanYi Micro Hei",     # 文泉驿微米黑（轻量，常见）
-        "WenQuanYi Zen Hei",       # 文泉驿正黑
-        "AR PL UMing CN",          # AR PL 明体
-        "AR PL UKai CN",           # AR PL 楷体
-        "Noto Serif CJK SC",       # 思源宋体
-        # --- macOS ---
-        "Heiti SC",                # 黑体-简
-        "STHeiti",                 # 华文黑体
-        "PingFang SC",             # 苹方
-        "Songti SC",               # 宋体-简
-        "STSong",                  # 华文宋体
-        # --- Windows ---
-        "Microsoft YaHei",         # 微软雅黑
-        "SimHei",                  # 黑体
-        "SimSun",                  # 宋体
-        "FangSong",                # 仿宋
-        "KaiTi",                   # 楷体
-    ]
-
-    _selected = None
-    for _font in _CJK_CANDIDATES:
-        if _font in _available_fonts:
-            _selected = _font
-            break
-
-    if _selected:
-        plt.rcParams["font.sans-serif"] = [_selected, "DejaVu Sans", "sans-serif"]
-        plt.rcParams["axes.unicode_minus"] = False
-        print(f"[字体] 使用中文字体: {_selected}")
-    else:
-        # 回退：仍然尝试通过 font.sans-serif 让系统自行匹配
-        plt.rcParams["font.sans-serif"] = _CJK_CANDIDATES + ["DejaVu Sans", "sans-serif"]
-        plt.rcParams["axes.unicode_minus"] = False
-
-        # 给出安装建议
-        _hint_lines = [
-            "未检测到已安装的中文字体，图表中文可能显示为方块。",
-            "请按以下方式安装中文字体：",
-            "  Debian/Ubuntu:  sudo apt install fonts-noto-cjk fonts-wqy-microhei",
-            "  CentOS/RHEL:    sudo yum install google-noto-cjk-fonts wqy-microhei-fonts",
-            "  Arch:           sudo pacman -S noto-fonts-cjk wqy-microhei",
-            "  macOS:          系统自带中文字体，无需额外安装",
-            "  Windows:        系统自带中文字体，无需额外安装",
-            "安装后删除 matplotlib 字体缓存: rm -rf ~/.cache/matplotlib",
-        ]
-        print("[字体] " + "\n[字体] ".join(_hint_lines))
-
-_setup_chinese_font()
+plt.rcParams["font.sans-serif"] = ["SimHei", "DejaVu Sans", "sans-serif"]
+plt.rcParams["axes.unicode_minus"] = False
+print("[字体] 强制使用 SimHei 黑体")
 
 
 # ---------------------------------------------------------------------------
