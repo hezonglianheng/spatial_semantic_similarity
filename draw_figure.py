@@ -535,6 +535,7 @@ class LineChartPlotter:
             # 必须在此重新应用中文字体配置（见文件顶部字体配置注释）
             plt.rcParams["font.sans-serif"] = [_FONT_NAME] + plt.rcParams["font.sans-serif"]
             plt.rcParams["font.family"] = "sans-serif"
+            plt.rcParams["axes.unicode_minus"] = False
 
             if subplots and len(y_columns) > 1:
                 fig, axes = plt.subplots(
