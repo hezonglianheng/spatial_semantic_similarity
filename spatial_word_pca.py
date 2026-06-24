@@ -490,6 +490,7 @@ def main():
             for layer_idx, emb in word_all_layer_cache[word].items():
                 layer_embeddings[layer_idx][base].append(emb)
 
+    '''
     # 序列化为 JSON 兼容结构
     embed_save_path = os.path.join(
         args.output_dir,
@@ -516,6 +517,7 @@ def main():
     with open(embed_save_path, "w", encoding="utf-8") as f:
         json.dump(save_data, f, ensure_ascii=False, indent=2)
     print(f"\n[信息] 已保存词嵌入数据到 {embed_save_path}")
+    '''
 
     # ──────────────────────────────────────────────────────────────
     # Step 7: 逐层 PCA + 绘图
